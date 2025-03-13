@@ -107,7 +107,16 @@ void cpp_evolve(const std::vector<program> &h_oldprogs,
     }
 
   } else {
-    // Set mutation type
+    std::vector<mutation_t> mutation_types(n_progs);
+    std::vector<float> random_values(n_progs);
+
+    // Generate all random numbers together
+    for (int i = 0; i < n_progs; ++i) {
+      random_values[i] = dist_U(h_gen);
+    }
+   // Count crossovers to determine total tournaments needed
+    int crossover_count = 0;
+    // Pre-calculate mutation probabilities once
     float mut_probs[4];
     mut_probs[0] = params.p_crossover;
     mut_probs[1] = params.p_subtree_mutation;
@@ -115,22 +124,30 @@ void cpp_evolve(const std::vector<program> &h_oldprogs,
     mut_probs[3] = params.p_point_mutation;
     std::partial_sum(mut_probs, mut_probs + 4, mut_probs);
 
-    for (auto i = 0; i < n_progs; ++i) {
-      float prob = dist_U(h_gen);
-
+    
+    // Set mutation types - vectorizable loop
+    for (int i = 0; i < n_progs; ++i) {
+      float prob = random_values[i];
+      
       if (prob < mut_probs[0]) {
-        h_nextprogs[i].mut_type = mutation_t::crossover;
-        n_tours++;
+        mutation_types[i] = mutation_t::crossover;
+        crossover_count++;
       } else if (prob < mut_probs[1]) {
-        h_nextprogs[i].mut_type = mutation_t::subtree;
+        mutation_types[i] = mutation_t::subtree;
       } else if (prob < mut_probs[2]) {
-        h_nextprogs[i].mut_type = mutation_t::hoist;
+        mutation_types[i] = mutation_t::hoist;
       } else if (prob < mut_probs[3]) {
-        h_nextprogs[i].mut_type = mutation_t::point;
+        mutation_types[i] = mutation_t::point;
       } else {
-        h_nextprogs[i].mut_type = mutation_t::reproduce;
+        mutation_types[i] = mutation_t::reproduce;
       }
     }
+    
+    // Update mutation types and total tournaments
+    for (int i = 0; i < n_progs; ++i) {
+      h_nextprogs[i].mut_type = mutation_types[i];
+    }
+    n_tours += crossover_count;
 
     // Run tournaments
     std::vector<int> d_win_indices(n_tours);
@@ -149,31 +166,70 @@ void cpp_evolve(const std::vector<program> &h_oldprogs,
     // Perform host mutations
 
     auto donor_pos = n_progs;
-    for (auto pos = 0; pos < n_progs; ++pos) {
-      auto parent_index = d_win_indices[pos];
-
-      if (h_nextprogs[pos].mut_type == mutation_t::crossover) {
-        // Get secondary index
-        auto donor_index = d_win_indices[donor_pos];
-        donor_pos++;
-        crossover(h_oldprogs[parent_index], h_oldprogs[donor_index],
-                  h_nextprogs[pos], params, h_gen);
-      } else if (h_nextprogs[pos].mut_type == mutation_t::subtree) {
-        subtree_mutation(h_oldprogs[parent_index], h_nextprogs[pos], params,
-                         h_gen);
-      } else if (h_nextprogs[pos].mut_type == mutation_t::hoist) {
-        hoist_mutation(h_oldprogs[parent_index], h_nextprogs[pos], params,
-                       h_gen);
-      } else if (h_nextprogs[pos].mut_type == mutation_t::point) {
-        point_mutation(h_oldprogs[parent_index], h_nextprogs[pos], params,
-                       h_gen);
-      } else if (h_nextprogs[pos].mut_type == mutation_t::reproduce) {
-        h_nextprogs[pos] = h_oldprogs[parent_index];
-      } else {
-        // Should not come here
+    // Group mutations by type to improve cache locality
+    std::vector<int> crossover_indices, subtree_indices, hoist_indices, 
+                     point_indices, reproduce_indices;
+    
+    for (int i = 0; i < n_progs; ++i) {
+      switch (mutation_types[i]) {
+        case mutation_t::crossover: crossover_indices.push_back(i); break;
+        case mutation_t::subtree: subtree_indices.push_back(i); break;
+        case mutation_t::hoist: hoist_indices.push_back(i); break;
+        case mutation_t::point: point_indices.push_back(i); break;
+        case mutation_t::reproduce: reproduce_indices.push_back(i); break;
       }
     }
+    
+    // Process mutations by type to improve cache coherence
+    
+    // Process reproduction (fastest operation) first
+    #pragma omp parallel for
+    for (size_t i = 0; i < reproduce_indices.size(); ++i) {
+      int pos = reproduce_indices[i];
+      int parent_index = d_win_indices[pos];
+      h_nextprogs[pos] = h_oldprogs[parent_index]; // Direct copy
+    }
+    
+    // Process crossovers
+    #pragma omp parallel for
+    for (size_t i = 0; i < crossover_indices.size(); ++i) {
+      int pos = crossover_indices[i];
+      int parent_index = d_win_indices[pos];
+      int donor_index = d_win_indices[donor_pos + i];
+      
+      // Thread-local RNG to avoid contention
+      PhiloxEngine thread_gen(seed + pos);
+      
+      crossover(h_oldprogs[parent_index], h_oldprogs[donor_index],
+                h_nextprogs[pos], params, thread_gen);
+    }
+    
+    // Process other mutation types similarly
+    #pragma omp parallel for
+    for (size_t i = 0; i < subtree_indices.size(); ++i) {
+      int pos = subtree_indices[i];
+      int parent_index = d_win_indices[pos];
+      PhiloxEngine thread_gen(seed + pos);
+      subtree_mutation(h_oldprogs[parent_index], h_nextprogs[pos], params, thread_gen);
+    }
+    
+    #pragma omp parallel for
+    for (size_t i = 0; i < hoist_indices.size(); ++i) {
+      int pos = hoist_indices[i];
+      int parent_index = d_win_indices[pos];
+      PhiloxEngine thread_gen(seed + pos);
+      hoist_mutation(h_oldprogs[parent_index], h_nextprogs[pos], params, thread_gen);
+    }
+    
+    #pragma omp parallel for
+    for (size_t i = 0; i < point_indices.size(); ++i) {
+      int pos = point_indices[i];
+      int parent_index = d_win_indices[pos];
+      PhiloxEngine thread_gen(seed + pos);
+      point_mutation(h_oldprogs[parent_index], h_nextprogs[pos], params, thread_gen);
+    }
   }
+
 
   // Update raw fitness for all programs
   set_batched_fitness(n_progs, h_nextprogs, params, n_samples, data, y,
