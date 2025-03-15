@@ -110,6 +110,11 @@ void cpp_evolve(const std::vector<program> &h_oldprogs,
     std::vector<mutation_t> mutation_types(n_progs);
     std::vector<float> random_values(n_progs);
 
+    /*
+    OPTIMIZATION: Added a bunch of arrays for cache friendliness
+    */
+
+    //OPTIMIZATION
     // Generate all random numbers together
     for (int i = 0; i < n_progs; ++i) {
       random_values[i] = dist_U(h_gen);
@@ -124,7 +129,7 @@ void cpp_evolve(const std::vector<program> &h_oldprogs,
     mut_probs[3] = params.p_point_mutation;
     std::partial_sum(mut_probs, mut_probs + 4, mut_probs);
 
-    
+    //OPTIMIZATION
     // Set mutation types - vectorizable loop
     for (int i = 0; i < n_progs; ++i) {
       float prob = random_values[i];
@@ -142,7 +147,8 @@ void cpp_evolve(const std::vector<program> &h_oldprogs,
         mutation_types[i] = mutation_t::reproduce;
       }
     }
-    
+
+    OPTIMIZATION
     // Update mutation types and total tournaments
     for (int i = 0; i < n_progs; ++i) {
       h_nextprogs[i].mut_type = mutation_types[i];
@@ -152,6 +158,7 @@ void cpp_evolve(const std::vector<program> &h_oldprogs,
     // Run tournaments
     std::vector<int> d_win_indices(n_tours);
 
+    
     auto criterion = params.criterion();
     tournament_kernel(h_oldprogs, d_win_indices.data(), seed, n_progs, n_tours,
                       tour_size, criterion, params.parsimony_coefficient);
@@ -169,7 +176,8 @@ void cpp_evolve(const std::vector<program> &h_oldprogs,
     // Group mutations by type to improve cache locality
     std::vector<int> crossover_indices, subtree_indices, hoist_indices, 
                      point_indices, reproduce_indices;
-    
+
+    //OPTIMIZATION
     for (int i = 0; i < n_progs; ++i) {
       switch (mutation_types[i]) {
         case mutation_t::crossover: crossover_indices.push_back(i); break;
@@ -181,7 +189,8 @@ void cpp_evolve(const std::vector<program> &h_oldprogs,
     }
     
     // Process mutations by type to improve cache coherence
-    
+
+    //OPIMIZATION
     // Process reproduction (fastest operation) first
     #pragma omp parallel for
     for (size_t i = 0; i < reproduce_indices.size(); ++i) {
