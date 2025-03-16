@@ -77,6 +77,32 @@ This project contains three input datasets for you to optimize. All 3 are standa
 ./genetic_benchmark housing
 ```
 
+## Important Commits
+
+### Compiler Flag Commit
+- Commit Hash: 87b04c0
+- Description: Added compiler flags.
+
+### Parallelize Execute Kernel
+- Commit Hash: 2afe4af
+- Description: Parallelized `execute_kernel` and added `-ffast-math` and `-fopenmp` flags to speed up to 0.77 sec.
+
+### Cache Friendly cpp_evolve
+- Commit Hash: 6a4541e
+- Description: Made `cpp_evolve` more cache friendly. Added parallelization
+
+
+
+## Benchmark Runner
+
+To include the visualizations from the `benchmark_runner.py`, you will need to install `matplotlib`. You can do this by running the following command:
+
+```bash
+sudo apt-get update && sudo apt-get install python3-matplotlib
+```
+
+Alternatively, you can add these dependencies to the Dockerfile before creating the Docker image.
+
 ## Code Overview
 
 There are multiple core functions
@@ -108,3 +134,4 @@ For ease of use and installation, we provide a docker image capable of running a
 You can build this yourself manually by running `cd docker && docker build -t <myusername>/598ape`. Alternatively we have pushed a pre-built version to `wsmoses/598ape` on Dockerhub.
 
 You can then use the Docker container to build and run your code. If you run `./dockerrun.sh` you will enter an interactive bash session with all the packages from docker installed (that script by default uses `wsmoses/598ape`, feel free to replace it with whatever location you like if you built from scratch). The current directory (aka this folder) is mounted within `/host`. Any files you create on your personal machine will be available there, and anything you make in the container in that folder will be available on your personal machine.
+

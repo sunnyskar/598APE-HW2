@@ -68,7 +68,9 @@ flatten_column_major(const std::vector<std::vector<float>> &data) {
   size_t cols = data[0].size();
   std::vector<float> flattened(rows * cols);
 
+  
   for (size_t j = 0; j < cols; ++j) {
+    // #pragma omp parallel for
     for (size_t i = 0; i < rows; ++i) {
       flattened[j * rows + i] = data[i][j];
     }
@@ -111,6 +113,8 @@ float mean_squared_error(const std::vector<float> &y_true,
   }
 
   float sum = 0.0f;
+  //Optimization
+  #pragma omp parallel for reduction(+ : sum)
   for (size_t i = 0; i < y_true.size(); ++i) {
     float diff = y_true[i] - y_pred[i];
     sum += diff * diff;
